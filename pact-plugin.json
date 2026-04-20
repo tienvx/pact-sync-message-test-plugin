@@ -1,0 +1,8 @@
+{
+  "manifestVersion": 1,
+  "pluginInterfaceVersion": 1,
+  "name": "sync-message-test",
+  "version": "0.1.0",
+  "executableType": "exec",
+  "entryPoint": "pact-sync-message-test-plugin"
+}

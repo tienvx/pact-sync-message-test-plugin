@@ -13,8 +13,8 @@ use maplit::hashmap;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Mutex, oneshot};
-use tonic::{Response, Status, transport::Server};
+use tokio::sync::{oneshot, Mutex};
+use tonic::{transport::Server, Response, Status};
 use uuid::Uuid;
 
 use crate::proto::catalogue_entry::EntryType;
@@ -37,7 +37,6 @@ fn update_access_time() {
 pub struct SyncMessageConfig {
     pub request_content: Vec<u8>,
     pub request_content_type: String,
-    pub request_metadata: HashMap<String, Value>,
     pub request_metadata_with_generators: HashMap<String, Value>,
     pub request_generators: Value,
     pub request_generated_content: String,
@@ -48,9 +47,7 @@ pub struct SyncMessageConfig {
 pub struct SyncMessageResponse {
     pub content: Vec<u8>,
     pub content_type: String,
-    pub metadata: HashMap<String, Vec<u8>>,
     pub metadata_with_generators: HashMap<String, Value>,
-    pub generators: Value,
     pub generated_content: String,
 }
 
@@ -67,8 +64,11 @@ impl PactPlugin for SyncMessagePactPlugin {
     ) -> Result<tonic::Response<proto::InitPluginResponse>, tonic::Status> {
         update_access_time();
         let message = request.get_ref();
-        debug!("Init request from {}/{}", message.implementation, message.version);
-        
+        debug!(
+            "Init request from {}/{}",
+            message.implementation, message.version
+        );
+
         Ok(Response::new(proto::InitPluginResponse {
             catalogue: vec![
                 proto::CatalogueEntry {
@@ -83,7 +83,7 @@ impl PactPlugin for SyncMessagePactPlugin {
                         "content-types".to_string() => "application/test".to_string()
                     },
                 },
-            ]
+            ],
         }))
     }
 
@@ -131,7 +131,7 @@ impl PactPlugin for SyncMessagePactPlugin {
                                     }
                                 ]
                             }
-                        }
+                        },
                     }))
                 }
             }
@@ -152,7 +152,7 @@ impl PactPlugin for SyncMessagePactPlugin {
                                 }
                             ]
                         }
-                    }
+                    },
                 }))
             }
             (Some(expected), None) => {
@@ -172,16 +172,14 @@ impl PactPlugin for SyncMessagePactPlugin {
                                 }
                             ]
                         }
-                    }
+                    },
                 }))
             }
-            (None, None) => {
-                Ok(Response::new(proto::CompareContentsResponse {
-                    error: String::default(),
-                    type_mismatch: None,
-                    results: hashmap! {}
-                }))
-            }
+            (None, None) => Ok(Response::new(proto::CompareContentsResponse {
+                error: String::default(),
+                type_mismatch: None,
+                results: hashmap! {},
+            })),
         }
     }
 
@@ -190,10 +188,13 @@ impl PactPlugin for SyncMessagePactPlugin {
         request: tonic::Request<proto::ConfigureInteractionRequest>,
     ) -> Result<tonic::Response<proto::ConfigureInteractionResponse>, tonic::Status> {
         update_access_time();
-        debug!("Received configure_interaction request for '{}'", request.get_ref().content_type);
+        debug!(
+            "Received configure_interaction request for '{}'",
+            request.get_ref().content_type
+        );
 
         let contents_config = request.get_ref().contents_config.as_ref();
-        
+
         // Extract metadata from contentsConfig - it may be nested under "metadata" key or at the top level
         let message_metadata = if let Some(config) = contents_config {
             if let Some(metadata) = config.fields.get("metadata") {
@@ -209,7 +210,7 @@ impl PactPlugin for SyncMessagePactPlugin {
         } else {
             None
         };
-        
+
         let interactions = vec![proto::InteractionResponse {
             contents: None,
             rules: hashmap! {},
@@ -235,7 +236,7 @@ impl PactPlugin for SyncMessagePactPlugin {
         update_access_time();
         debug!("Received generate_content request");
         let req = request.get_ref();
-        
+
         let contents = req.contents.as_ref();
         let body = contents.map(|c| proto::Body {
             content_type: c.content_type.clone(),
@@ -255,28 +256,34 @@ impl PactPlugin for SyncMessagePactPlugin {
         update_access_time();
         debug!("Received start_mock_server request");
         let req = request.get_ref();
-        
+
         let host = if req.host_interface.is_empty() {
             "127.0.0.1"
         } else {
             req.host_interface.as_str()
         };
         let port = req.port;
-        
-        let addr: SocketAddr = format!("{}:{}", host, port).parse()
-            .map_err(|e| Status::invalid_argument(format!("Invalid address: {} - host: {}, port: {}", e, host, port)))?;
-        
-        let listener = TcpListener::bind(addr).await
+
+        let addr: SocketAddr = format!("{}:{}", host, port).parse().map_err(|e| {
+            Status::invalid_argument(format!(
+                "Invalid address: {} - host: {}, port: {}",
+                e, host, port
+            ))
+        })?;
+
+        let listener = TcpListener::bind(addr)
+            .await
             .map_err(|e| Status::internal(format!("Failed to bind: {}", e)))?;
-        
-        let address = listener.local_addr()
+
+        let address = listener
+            .local_addr()
             .map_err(|e| Status::internal(format!("Failed to get local address: {}", e)))?;
-        
+
         let server_key = Uuid::new_v4().to_string();
         let server_key_for_spawn = server_key.clone();
         let interactions = self.interactions.clone();
         let pact_json = req.pact.clone();
-        
+
         tokio::spawn(async move {
             run_mock_server(listener, server_key_for_spawn, interactions, pact_json).await;
         });
@@ -287,8 +294,8 @@ impl PactPlugin for SyncMessagePactPlugin {
                     key: server_key,
                     port: address.port() as u32,
                     address: format!("tcp://{}:{}", address.ip(), address.port()),
-                }
-            ))
+                },
+            )),
         }))
     }
 
@@ -297,8 +304,11 @@ impl PactPlugin for SyncMessagePactPlugin {
         request: tonic::Request<proto::ShutdownMockServerRequest>,
     ) -> Result<tonic::Response<proto::ShutdownMockServerResponse>, tonic::Status> {
         update_access_time();
-        debug!("Received shutdown_mock_server request for server: {}", request.get_ref().server_key);
-        
+        debug!(
+            "Received shutdown_mock_server request for server: {}",
+            request.get_ref().server_key
+        );
+
         Ok(Response::new(proto::ShutdownMockServerResponse {
             ok: true,
             results: vec![],
@@ -310,8 +320,11 @@ impl PactPlugin for SyncMessagePactPlugin {
         request: tonic::Request<proto::MockServerRequest>,
     ) -> Result<tonic::Response<proto::MockServerResults>, tonic::Status> {
         update_access_time();
-        debug!("Received get_mock_server_results request for server: {}", request.get_ref().server_key);
-        
+        debug!(
+            "Received get_mock_server_results request for server: {}",
+            request.get_ref().server_key
+        );
+
         Ok(Response::new(proto::MockServerResults {
             ok: true,
             results: vec![],
@@ -323,8 +336,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         _request: tonic::Request<proto::VerificationPreparationRequest>,
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, tonic::Status> {
         update_access_time();
-        debug!("Received prepare_interaction_for_verification request");
-        
         Ok(Response::new(proto::VerificationPreparationResponse {
             response: None,
         }))
@@ -335,8 +346,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         _request: tonic::Request<proto::VerifyInteractionRequest>,
     ) -> Result<tonic::Response<proto::VerifyInteractionResponse>, tonic::Status> {
         update_access_time();
-        debug!("Received verify_interaction request");
-        
         Ok(Response::new(proto::VerifyInteractionResponse {
             response: None,
         }))
@@ -350,13 +359,12 @@ async fn run_mock_server(
     pact_json: String,
 ) {
     info!("Mock server started with key: {}", server_key);
-    
-    let pact: Value = serde_json::from_str(&pact_json)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    
+
+    let pact: Value = serde_json::from_str(&pact_json).unwrap_or_else(|_| serde_json::json!({}));
+
     let interactions_map = extract_interactions(&pact);
     interactions.lock().await.extend(interactions_map);
-    
+
     loop {
         match listener.accept().await {
             Ok((stream, addr)) => {
@@ -377,7 +385,11 @@ async fn run_mock_server(
 }
 
 fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
-    let parts: Vec<&str> = path.trim_start_matches('$').trim_start_matches('.').split('.').collect();
+    let parts: Vec<&str> = path
+        .trim_start_matches('$')
+        .trim_start_matches('.')
+        .split('.')
+        .collect();
     match value {
         Value::Object(map) => {
             if parts.len() == 1 {
@@ -387,7 +399,7 @@ fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
                     set_json_path(child, &parts[1..].join("."), new_value);
                 }
             }
-        },
+        }
         Value::Array(arr) => {
             if let Some(first) = parts.first() {
                 if let Ok(idx) = first.parse::<usize>() {
@@ -400,19 +412,50 @@ fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
                     }
                 }
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
 }
 
 fn apply_generators_to_body(content: &str, generators: &Value) -> String {
     use pact_models::generators::{GenerateValue, Generator, NoopVariantMatcher};
-    
+
     let mut parsed: Value = match serde_json::from_str(content) {
         Ok(v) => v,
-        Err(_) => return content.to_string(),
+        Err(_) => {
+            if let Some(gens) = generators.as_object() {
+                if let Some(body_gen) = gens.get("body") {
+                    if let Some(body_generators) = body_gen.as_object() {
+                        for (_path_key, gen_def) in body_generators {
+                            if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
+                                if let Some(gen_map) = gen_def.as_object() {
+                                    if let Some(generator) = Generator::from_map(gen_type, gen_map)
+                                    {
+                                        let context: std::collections::HashMap<&str, Value> =
+                                            std::collections::HashMap::new();
+                                        let matcher: Box<
+                                            dyn pact_models::generators::VariantMatcher
+                                                + Send
+                                                + Sync,
+                                        > = Box::new(NoopVariantMatcher);
+                                        if let Ok(result) = generator.generate_value(
+                                            &content.to_string(),
+                                            &context,
+                                            &matcher,
+                                        ) {
+                                            return result;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return content.to_string();
+        }
     };
-    
+
     if let Some(gens) = generators.as_object() {
         if let Some(body_gen) = gens.get("body") {
             if let Some(body_generators) = body_gen.as_object() {
@@ -422,16 +465,23 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
                     } else {
                         path_key.clone()
                     };
-                    
+
                     if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
                         if let Some(gen_map) = gen_def.as_object() {
                             if let Some(generator) = Generator::from_map(gen_type, gen_map) {
-                                let context: std::collections::HashMap<&str, Value> = std::collections::HashMap::new();
-                                let matcher: Box<dyn pact_models::generators::VariantMatcher + Send + Sync> = Box::new(NoopVariantMatcher);
-                                if let Ok(result) = generator.generate_value(&content.to_string(), &context, &matcher) {
-                                    let result_val: Value = serde_json::from_str(&result).unwrap_or(serde_json::Value::String(result));
+                                let context: std::collections::HashMap<&str, Value> =
+                                    std::collections::HashMap::new();
+                                let matcher: Box<
+                                    dyn pact_models::generators::VariantMatcher + Send + Sync,
+                                > = Box::new(NoopVariantMatcher);
+                                if let Ok(result) = generator.generate_value(
+                                    &content.to_string(),
+                                    &context,
+                                    &matcher,
+                                ) {
+                                    let result_val: Value = serde_json::from_str(&result)
+                                        .unwrap_or(serde_json::Value::String(result));
                                     set_json_path(&mut parsed, &key, &result_val);
-                                    return serde_json::to_string(&parsed).unwrap_or_else(|_| content.to_string());
                                 }
                             }
                         }
@@ -440,13 +490,13 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
             }
         }
     }
-    
+
     serde_json::to_string(&parsed).unwrap_or_else(|_| content.to_string())
 }
 
 fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
     use pact_models::generators::{GenerateValue, NoopVariantMatcher};
-    
+
     if let Some(gen_obj) = generators.get("metadata") {
         if let Some(metadata_generators) = gen_obj.as_object() {
             if let Some(metadata_obj) = metadata.as_object() {
@@ -455,16 +505,39 @@ fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
                     if let Some(gen_def) = metadata_generators.get(key) {
                         if let Some(gen_map) = gen_def.as_object() {
                             if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
-                                if let Some(generator) = pact_models::generators::Generator::from_map(gen_type, gen_map) {
-                                    let context: std::collections::HashMap<&str, Value> = std::collections::HashMap::new();
-                                    let matcher: Box<dyn pact_models::generators::VariantMatcher + Send + Sync> = Box::new(NoopVariantMatcher);
-                                    if let Ok(result_str) = generator.generate_value(&value.to_string(), &context, &matcher) {
+                                if let Some(generator) =
+                                    pact_models::generators::Generator::from_map(gen_type, gen_map)
+                                {
+                                    let context: std::collections::HashMap<&str, Value> =
+                                        std::collections::HashMap::new();
+                                    let matcher: Box<
+                                        dyn pact_models::generators::VariantMatcher + Send + Sync,
+                                    > = Box::new(NoopVariantMatcher);
+                                    if let Ok(result_str) = generator.generate_value(
+                                        &value.to_string(),
+                                        &context,
+                                        &matcher,
+                                    ) {
                                         if let Ok(num) = result_str.parse::<i64>() {
-                                            result.insert(key.clone(), serde_json::Value::Number(serde_json::Number::from(num)));
+                                            result.insert(
+                                                key.clone(),
+                                                serde_json::Value::Number(
+                                                    serde_json::Number::from(num),
+                                                ),
+                                            );
                                         } else if let Ok(num) = result_str.parse::<f64>() {
-                                            result.insert(key.clone(), serde_json::Value::Number(serde_json::Number::from_f64(num).unwrap_or(serde_json::Number::from(0))));
+                                            result.insert(
+                                                key.clone(),
+                                                serde_json::Value::Number(
+                                                    serde_json::Number::from_f64(num)
+                                                        .unwrap_or(serde_json::Number::from(0)),
+                                                ),
+                                            );
                                         } else {
-                                            result.insert(key.clone(), serde_json::Value::String(result_str));
+                                            result.insert(
+                                                key.clone(),
+                                                serde_json::Value::String(result_str),
+                                            );
                                         }
                                         continue;
                                     }
@@ -479,36 +552,6 @@ fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
         }
     }
     metadata.clone()
-}
-
-fn apply_response_generators_to_metadata(metadata: &Value, generators: &Value) -> HashMap<String, Value> {
-    let mut result = HashMap::new();
-    
-    if let Some(gen_obj) = generators.get("metadata") {
-        if let Some(metadata_generators) = gen_obj.as_object() {
-            if let Some(metadata_obj) = metadata.as_object() {
-                for (key, value) in metadata_obj {
-                    if let Some(gen_def) = metadata_generators.get(key) {
-                        if let Some(_gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
-                            let array_value = serde_json::json!(["Integer", value.clone()]);
-                            result.insert(key.clone(), array_value);
-                            continue;
-                        }
-                    }
-                    result.insert(key.clone(), value.clone());
-                }
-                return result;
-            }
-        }
-    }
-    
-    if let Some(metadata_obj) = metadata.as_object() {
-        for (key, value) in metadata_obj {
-            result.insert(key.clone(), value.clone());
-        }
-    }
-    
-    result
 }
 
 fn body_matches_structure(stored: &Value, received: &Value) -> bool {
@@ -530,7 +573,7 @@ fn body_matches_structure(stored: &Value, received: &Value) -> bool {
                 }
             }
             true
-        },
+        }
         (Value::Array(stored_arr), Value::Array(received_arr)) => {
             if stored_arr.len() != received_arr.len() {
                 return false;
@@ -541,21 +584,28 @@ fn body_matches_structure(stored: &Value, received: &Value) -> bool {
                 }
             }
             true
-        },
+        }
         _ => true, // Non-object/non-array values are considered matching if they reach here
     }
 }
 
 fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
     let mut interactions = HashMap::new();
-    
+
     if let Some(interactions_arr) = pact.get("interactions").and_then(|v| v.as_array()) {
         for interaction in interactions_arr {
             if interaction.get("type").and_then(|v| v.as_str()) == Some("Synchronous/Messages") {
-                let key = interaction.get("description").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let key = interaction
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
                 info!("Processing interaction: {}", key);
-                info!("Full interaction JSON: {}", serde_json::to_string_pretty(interaction).unwrap_or_default());
-                
+                info!(
+                    "Full interaction JSON: {}",
+                    serde_json::to_string_pretty(interaction).unwrap_or_default()
+                );
+
                 let request_content = interaction
                     .get("request")
                     .and_then(|r| r.get("contents"))
@@ -570,7 +620,7 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                         }
                     })
                     .unwrap_or_default();
-                
+
                 let request_content_type = interaction
                     .get("request")
                     .and_then(|r| r.get("contents"))
@@ -578,26 +628,33 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                     .and_then(|v| v.as_str())
                     .unwrap_or("application/test")
                     .to_string();
-                
+
                 let request_metadata = interaction
                     .get("request")
                     .and_then(|r| r.get("metadata"))
                     .cloned()
                     .unwrap_or(Value::Null);
-                
+
                 let request_generators = interaction
                     .get("request")
                     .and_then(|r| r.get("generators"))
                     .cloned()
                     .unwrap_or(Value::Null);
                 info!("Request generators: {:?}", request_generators);
-                
-                let request_generated_content = apply_generators_to_body(&String::from_utf8_lossy(&request_content), &request_generators);
+
+                let request_generated_content = apply_generators_to_body(
+                    &String::from_utf8_lossy(&request_content),
+                    &request_generators,
+                );
                 info!("Request generated content: {}", request_generated_content);
-                
-                let request_metadata_with_generators = apply_generators_to_metadata(&request_metadata, &request_generators);
-                info!("Request metadata with generators: {:?}", request_metadata_with_generators);
-                
+
+                let request_metadata_with_generators =
+                    apply_generators_to_metadata(&request_metadata, &request_generators);
+                info!(
+                    "Request metadata with generators: {:?}",
+                    request_metadata_with_generators
+                );
+
                 let mut responses = vec![];
                 if let Some(response_arr) = interaction.get("response").and_then(|v| v.as_array()) {
                     for resp in response_arr {
@@ -616,46 +673,50 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                                 }
                             })
                             .unwrap_or_default();
-                        
+
                         let content_type = resp
                             .get("contents")
                             .and_then(|c| c.get("contentType"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("application/test")
                             .to_string();
-                        
-                        let generators = resp
-                            .get("generators")
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        
-                        let generated_content = apply_generators_to_body(&String::from_utf8_lossy(&content), &generators);
-                        
-                        let response_metadata = resp
-                            .get("metadata")
-                            .cloned()
-                            .unwrap_or(Value::Null);
-                        
-                        let response_metadata_with_generators = apply_response_generators_to_metadata(&response_metadata, &generators);
-                        
+
+                        let generators = resp.get("generators").cloned().unwrap_or(Value::Null);
+
+                        let generated_content = apply_generators_to_body(
+                            &String::from_utf8_lossy(&content),
+                            &generators,
+                        );
+
+                        let response_metadata =
+                            resp.get("metadata").cloned().unwrap_or(Value::Null);
+
+                        let response_metadata_with_generators =
+                            apply_generators_to_metadata(&response_metadata, &generators)
+                                .as_object()
+                                .cloned()
+                                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                                .unwrap_or_default();
+
                         responses.push(SyncMessageResponse {
                             content,
                             content_type,
-                            metadata: HashMap::new(),
                             metadata_with_generators: response_metadata_with_generators,
-                            generators,
                             generated_content,
                         });
                     }
                 }
-                
+
                 interactions.insert(
                     key,
                     SyncMessageConfig {
                         request_content,
                         request_content_type,
-                        request_metadata: request_metadata.as_object().cloned().map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default(),
-                        request_metadata_with_generators: request_metadata_with_generators.as_object().cloned().map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default(),
+                        request_metadata_with_generators: request_metadata_with_generators
+                            .as_object()
+                            .cloned()
+                            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                            .unwrap_or_default(),
                         request_generators,
                         request_generated_content,
                         responses,
@@ -664,7 +725,7 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
             }
         }
     }
-    
+
     interactions
 }
 
@@ -686,32 +747,33 @@ async fn handle_client(
             Err(e) => return Err(e.into()),
         }
     }
-    
+
     let received_str = String::from_utf8_lossy(&buffer);
     debug!("Received: {}", received_str);
-    
+
     let interactions_map = interactions.lock().await;
-    
+
     let received_bytes = received_str.trim().as_bytes().to_vec();
-    
+
     // Try exact match first
-    let matching_interaction = interactions_map.values().find(|config| {
-        config.request_content == received_bytes
-    }).or_else(|| {
-        // If no exact match, try matching by structure (ignoring generator matchers)
-        let received: Value = match serde_json::from_str(received_str.trim()) {
-            Ok(v) => v,
-            Err(_) => return None,
-        };
-        interactions_map.values().find(|config| {
-            let stored: Value = match serde_json::from_slice(&config.request_content) {
+    let matching_interaction = interactions_map
+        .values()
+        .find(|config| config.request_content == received_bytes)
+        .or_else(|| {
+            // If no exact match, try matching by structure (ignoring generator matchers)
+            let received: Value = match serde_json::from_str(received_str.trim()) {
                 Ok(v) => v,
-                Err(_) => return false,
+                Err(_) => return None,
             };
-            body_matches_structure(&stored, &received)
-        })
-    });
-    
+            interactions_map.values().find(|config| {
+                let stored: Value = match serde_json::from_slice(&config.request_content) {
+                    Ok(v) => v,
+                    Err(_) => return false,
+                };
+                body_matches_structure(&stored, &received)
+            })
+        });
+
     // If still no match, try matching the received body content against the pact JSON
     let matching_interaction = matching_interaction.or_else(|| {
         let received_str_trimmed = received_str.trim();
@@ -731,7 +793,7 @@ async fn handle_client(
             None
         }
     });
-    
+
     // If still no match and received body looks like incomplete JSON, try prefix match
     let matching_interaction = matching_interaction.or_else(|| {
         let received_trimmed = received_str.trim();
@@ -744,36 +806,50 @@ async fn handle_client(
             None
         }
     });
-    
+
     if let Some(config) = matching_interaction {
-        info!("Found matching interaction, responses count: {}", config.responses.len());
+        info!(
+            "Found matching interaction, responses count: {}",
+            config.responses.len()
+        );
         let mut response = Vec::new();
-        
-        response.extend(format!("request-content: {}\n", config.request_generated_content).as_bytes());
-        response.extend(format!("request-content-type: {}\n", config.request_content_type).as_bytes());
-        
+
+        response
+            .extend(format!("request-content: {}\n", config.request_generated_content).as_bytes());
+        response
+            .extend(format!("request-content-type: {}\n", config.request_content_type).as_bytes());
+
         if !config.request_metadata_with_generators.is_empty() {
             let metadata_json = serde_json::to_string(&config.request_metadata_with_generators)
                 .unwrap_or_else(|_| "{}".to_string());
             response.extend(format!("request-metadata: {}\n", metadata_json).as_bytes());
         }
-        
+
         // Send response content if available
         if !config.responses.is_empty() {
-            info!("Sending {} responses from pact JSON", config.responses.len());
+            info!(
+                "Sending {} responses from pact JSON",
+                config.responses.len()
+            );
             for (i, resp) in config.responses.iter().enumerate() {
-                response.extend(format!("response-{}-content: {}\n", i + 1, resp.generated_content).as_bytes());
-                response.extend(format!("response-{}-content-type: {}\n", i + 1, resp.content_type).as_bytes());
-                
-              let response_metadata_str = serde_json::to_string(&resp.metadata_with_generators)
+                response.extend(
+                    format!("response-{}-content: {}\n", i + 1, resp.generated_content).as_bytes(),
+                );
+                response.extend(
+                    format!("response-{}-content-type: {}\n", i + 1, resp.content_type).as_bytes(),
+                );
+
+                let response_metadata_str = serde_json::to_string(&resp.metadata_with_generators)
                     .unwrap_or_else(|_| "{}".to_string());
-                response.extend(format!("response-{}-metadata: {}\n", i + 1, response_metadata_str).as_bytes());
+                response.extend(
+                    format!("response-{}-metadata: {}\n", i + 1, response_metadata_str).as_bytes(),
+                );
             }
         } else {
             // If no responses from pact JSON, echo the received body
             info!("No responses in pact JSON, echoing received body");
             let received_str_trimmed = received_str.trim().to_string();
-            
+
             info!("Response content: {}", received_str_trimmed);
             response.extend(format!("response-1-content: {}\n", received_str_trimmed).as_bytes());
             if serde_json::from_str::<Value>(received_str.trim()).is_ok() {
@@ -782,13 +858,13 @@ async fn handle_client(
                 response.extend(b"response-1-content-type: text/plain\n");
             }
         }
-        
+
         stream.write_all(&response).await?;
         stream.flush().await?;
     } else {
         debug!("No matching interaction found");
     }
-    
+
     Ok(())
 }
 
@@ -799,8 +875,12 @@ struct TcpIncoming {
 impl Stream for TcpIncoming {
     type Item = Result<TcpStream, std::io::Error>;
 
-    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-        std::pin::Pin::new(&mut self.inner).poll_accept(cx)
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::pin::Pin::new(&mut self.inner)
+            .poll_accept(cx)
             .map_ok(|(stream, _)| stream)
             .map(|v| Some(v))
     }
@@ -811,13 +891,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_level = env::var("PACT_LOGLEVEL")
         .or_else(|_| env::var("LOG_LEVEL"))
         .unwrap_or_else(|_| "INFO".to_string());
-    
+
     std::fs::create_dir_all("./log")?;
     let file_appender = tracing_appender::rolling::daily("./log", "plugin.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing_core::LevelFilter::from_str(&log_level).unwrap_or(tracing_core::LevelFilter::INFO))
+        .with_max_level(
+            tracing_core::LevelFilter::from_str(&log_level)
+                .unwrap_or(tracing_core::LevelFilter::INFO),
+        )
         .with_writer(non_blocking)
         .with_thread_names(true)
         .with_ansi(false)
@@ -829,14 +912,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let address = listener.local_addr()?;
 
     let server_key = Uuid::new_v4().to_string();
-    println!("{{\"port\":{}, \"serverKey\":\"{}\"}}", address.port(), server_key);
+    println!(
+        "{{\"port\":{}, \"serverKey\":\"{}\"}}",
+        address.port(),
+        server_key
+    );
     let _ = std::io::stdout().flush();
 
-    info!("Plugin started on port {} with server_key: {}", address.port(), server_key);
-    
+    info!(
+        "Plugin started on port {} with server_key: {}",
+        address.port(),
+        server_key
+    );
+
     update_access_time();
     let (shutdown_send, shutdown_recv) = oneshot::channel::<()>();
-    
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
         let mut elapsed = false;
@@ -846,7 +937,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let guard = SHUTDOWN_TIMER.lock().unwrap();
                 if let Some(instant) = &*guard {
                     if instant.elapsed().as_secs() > MAX_TIME {
-                        info!("No activity for more than {} seconds, sending shutdown signal", MAX_TIME);
+                        info!(
+                            "No activity for more than {} seconds, sending shutdown signal",
+                            MAX_TIME
+                        );
                         elapsed = true;
                     }
                 }
@@ -858,13 +952,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let plugin = SyncMessagePactPlugin::default();
     Server::builder()
         .add_service(PactPluginServer::new(plugin))
-        .serve_with_incoming_shutdown(
-            TcpIncoming { inner: listener },
-            async move {
-                let _ = shutdown_recv.await;
-                info!("Received shutdown signal, shutting plugin down");
-            }
-        )
+        .serve_with_incoming_shutdown(TcpIncoming { inner: listener }, async move {
+            let _ = shutdown_recv.await;
+            info!("Received shutdown signal, shutting plugin down");
+        })
         .await?;
 
     Ok(())

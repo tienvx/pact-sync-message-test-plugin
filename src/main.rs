@@ -4,16 +4,14 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::time::{Duration, Instant};
 
-use futures::Stream;
 use log::{debug, info};
 use maplit::hashmap;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::Mutex;
+use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{transport::Server, Response, Status};
 use uuid::Uuid;
 
@@ -21,17 +19,6 @@ use crate::proto::catalogue_entry::EntryType;
 use crate::proto::pact_plugin_server::{PactPlugin, PactPluginServer};
 
 mod proto;
-
-lazy_static::lazy_static! {
-    pub static ref SHUTDOWN_TIMER: StdMutex<Option<Instant>> = StdMutex::new(None);
-}
-
-const MAX_TIME: u64 = 600;
-
-fn update_access_time() {
-    let mut guard = SHUTDOWN_TIMER.lock().unwrap();
-    *guard = Some(Instant::now());
-}
 
 #[derive(Debug, Clone)]
 pub struct SyncMessageConfig {
@@ -62,7 +49,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::InitPluginRequest>,
     ) -> Result<tonic::Response<proto::InitPluginResponse>, tonic::Status> {
-        update_access_time();
         let message = request.get_ref();
         debug!(
             "Init request from {}/{}",
@@ -91,7 +77,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         _request: tonic::Request<proto::Catalogue>,
     ) -> Result<tonic::Response<()>, tonic::Status> {
-        update_access_time();
         debug!("Update catalogue request, ignoring");
         Ok(Response::new(()))
     }
@@ -100,7 +85,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::CompareContentsRequest>,
     ) -> Result<tonic::Response<proto::CompareContentsResponse>, tonic::Status> {
-        update_access_time();
         let request = request.get_ref();
         debug!("compare_contents request - {:?}", request);
 
@@ -187,7 +171,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::ConfigureInteractionRequest>,
     ) -> Result<tonic::Response<proto::ConfigureInteractionResponse>, tonic::Status> {
-        update_access_time();
         debug!(
             "Received configure_interaction request for '{}'",
             request.get_ref().content_type
@@ -233,7 +216,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::GenerateContentRequest>,
     ) -> Result<tonic::Response<proto::GenerateContentResponse>, tonic::Status> {
-        update_access_time();
         debug!("Received generate_content request");
         let req = request.get_ref();
 
@@ -253,7 +235,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::StartMockServerRequest>,
     ) -> Result<tonic::Response<proto::StartMockServerResponse>, tonic::Status> {
-        update_access_time();
         debug!("Received start_mock_server request");
         let req = request.get_ref();
 
@@ -303,7 +284,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::ShutdownMockServerRequest>,
     ) -> Result<tonic::Response<proto::ShutdownMockServerResponse>, tonic::Status> {
-        update_access_time();
         debug!(
             "Received shutdown_mock_server request for server: {}",
             request.get_ref().server_key
@@ -319,7 +299,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::MockServerRequest>,
     ) -> Result<tonic::Response<proto::MockServerResults>, tonic::Status> {
-        update_access_time();
         debug!(
             "Received get_mock_server_results request for server: {}",
             request.get_ref().server_key
@@ -335,7 +314,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         _request: tonic::Request<proto::VerificationPreparationRequest>,
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, tonic::Status> {
-        update_access_time();
         Ok(Response::new(proto::VerificationPreparationResponse {
             response: None,
         }))
@@ -345,7 +323,6 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         _request: tonic::Request<proto::VerifyInteractionRequest>,
     ) -> Result<tonic::Response<proto::VerifyInteractionResponse>, tonic::Status> {
-        update_access_time();
         Ok(Response::new(proto::VerifyInteractionResponse {
             response: None,
         }))
@@ -868,24 +845,6 @@ async fn handle_client(
     Ok(())
 }
 
-struct TcpIncoming {
-    inner: TcpListener,
-}
-
-impl Stream for TcpIncoming {
-    type Item = Result<TcpStream, std::io::Error>;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::pin::Pin::new(&mut self.inner)
-            .poll_accept(cx)
-            .map_ok(|(stream, _)| stream)
-            .map(Some)
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_level = env::var("PACT_LOGLEVEL")
@@ -925,37 +884,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_key
     );
 
-    update_access_time();
-    let (shutdown_send, shutdown_recv) = oneshot::channel::<()>();
-
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(10));
-        let mut elapsed = false;
-        while !elapsed {
-            interval.tick().await;
-            {
-                let guard = SHUTDOWN_TIMER.lock().unwrap();
-                if let Some(instant) = &*guard {
-                    if instant.elapsed().as_secs() > MAX_TIME {
-                        info!(
-                            "No activity for more than {} seconds, sending shutdown signal",
-                            MAX_TIME
-                        );
-                        elapsed = true;
-                    }
-                }
-            }
-        }
-        let _ = shutdown_send.send(());
-    });
-
     let plugin = SyncMessagePactPlugin::default();
     Server::builder()
         .add_service(PactPluginServer::new(plugin))
-        .serve_with_incoming_shutdown(TcpIncoming { inner: listener }, async move {
-            let _ = shutdown_recv.await;
-            info!("Received shutdown signal, shutting plugin down");
-        })
+        .serve_with_incoming(TcpListenerStream::new(listener))
         .await?;
 
     Ok(())

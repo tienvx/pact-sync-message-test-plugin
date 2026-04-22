@@ -460,7 +460,11 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
         if let Some(body_gen) = gens.get("body") {
             if let Some(body_generators) = body_gen.as_object() {
                 for (path_key, gen_def) in body_generators {
-                    let key = path_key.strip_prefix('$').unwrap_or(path_key.as_str()).trim_start_matches('.').to_string();
+                    let key = path_key
+                        .strip_prefix('$')
+                        .unwrap_or(path_key.as_str())
+                        .trim_start_matches('.')
+                        .to_string();
 
                     if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
                         if let Some(gen_map) = gen_def.as_object() {

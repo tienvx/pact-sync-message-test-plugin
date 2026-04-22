@@ -12,7 +12,6 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1.6.1", features = ["v4"] }
 futures = "0.3"
 log = "0.4"
-env_logger = "0.10.1"
 maplit = "1.0.2"
 pact_matching = "~1.1.9"
 pact_models = "~1.1.17"
@@ -24,8 +23,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 tracing-core = "0.1"
-lazy_static = "1.4"
-rand = "0.8"
 
 [build-dependencies]
 tonic-build = "0.10.2"

@@ -15,6 +15,25 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{transport::Server, Response, Status};
 use uuid::Uuid;
 
+use pact_models::generators::NoopVariantMatcher;
+
+fn generator_context() -> (
+    std::collections::HashMap<&'static str, Value>,
+    Box<dyn pact_models::generators::VariantMatcher + Send + Sync>,
+) {
+    (
+        std::collections::HashMap::new(),
+        Box::new(NoopVariantMatcher),
+    )
+}
+
+fn value_to_hashmap(v: &Value) -> HashMap<String, Value> {
+    v.as_object()
+        .cloned()
+        .map(|m| m.into_iter().collect())
+        .unwrap_or_default()
+}
+
 use crate::proto::catalogue_entry::EntryType;
 use crate::proto::pact_plugin_server::{PactPlugin, PactPluginServer};
 
@@ -395,7 +414,7 @@ fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
 }
 
 fn apply_generators_to_body(content: &str, generators: &Value) -> String {
-    use pact_models::generators::{GenerateValue, Generator, NoopVariantMatcher};
+    use pact_models::generators::{GenerateValue, Generator};
 
     let mut parsed: Value = match serde_json::from_str(content) {
         Ok(v) => v,
@@ -408,13 +427,7 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
                                 if let Some(gen_map) = gen_def.as_object() {
                                     if let Some(generator) = Generator::from_map(gen_type, gen_map)
                                     {
-                                        let context: std::collections::HashMap<&str, Value> =
-                                            std::collections::HashMap::new();
-                                        let matcher: Box<
-                                            dyn pact_models::generators::VariantMatcher
-                                                + Send
-                                                + Sync,
-                                        > = Box::new(NoopVariantMatcher);
+                                        let (context, matcher) = generator_context();
                                         if let Ok(result) = generator.generate_value(
                                             &content.to_string(),
                                             &context,
@@ -446,11 +459,7 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
                     if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
                         if let Some(gen_map) = gen_def.as_object() {
                             if let Some(generator) = Generator::from_map(gen_type, gen_map) {
-                                let context: std::collections::HashMap<&str, Value> =
-                                    std::collections::HashMap::new();
-                                let matcher: Box<
-                                    dyn pact_models::generators::VariantMatcher + Send + Sync,
-                                > = Box::new(NoopVariantMatcher);
+                                let (context, matcher) = generator_context();
                                 if let Ok(result) = generator.generate_value(
                                     &content.to_string(),
                                     &context,
@@ -472,7 +481,7 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
 }
 
 fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
-    use pact_models::generators::{GenerateValue, NoopVariantMatcher};
+    use pact_models::generators::GenerateValue;
 
     if let Some(gen_obj) = generators.get("metadata") {
         if let Some(metadata_generators) = gen_obj.as_object() {
@@ -485,11 +494,7 @@ fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
                                 if let Some(generator) =
                                     pact_models::generators::Generator::from_map(gen_type, gen_map)
                                 {
-                                    let context: std::collections::HashMap<&str, Value> =
-                                        std::collections::HashMap::new();
-                                    let matcher: Box<
-                                        dyn pact_models::generators::VariantMatcher + Send + Sync,
-                                    > = Box::new(NoopVariantMatcher);
+                                    let (context, matcher) = generator_context();
                                     if let Ok(result_str) = generator.generate_value(
                                         &value.to_string(),
                                         &context,
@@ -668,12 +673,9 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                         let response_metadata =
                             resp.get("metadata").cloned().unwrap_or(Value::Null);
 
-                        let response_metadata_with_generators =
-                            apply_generators_to_metadata(&response_metadata, &generators)
-                                .as_object()
-                                .cloned()
-                                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                                .unwrap_or_default();
+                        let response_metadata_with_generators = value_to_hashmap(
+                            &apply_generators_to_metadata(&response_metadata, &generators),
+                        );
 
                         responses.push(SyncMessageResponse {
                             content,
@@ -689,11 +691,9 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                     SyncMessageConfig {
                         request_content,
                         request_content_type,
-                        request_metadata_with_generators: request_metadata_with_generators
-                            .as_object()
-                            .cloned()
-                            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                            .unwrap_or_default(),
+                        request_metadata_with_generators: value_to_hashmap(
+                            &request_metadata_with_generators,
+                        ),
                         request_generators,
                         request_generated_content,
                         responses,

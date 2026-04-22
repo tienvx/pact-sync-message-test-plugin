@@ -47,7 +47,10 @@ jobs:
         shell: bash
 
       - name: Run tests
-        run: cd examples/consumer-test && PACT_DO_NOT_TRACK=true cargo test --verbose
+        run: cargo test --verbose
+        working-directory: examples/consumer-test
+        env:
+          PACT_DO_NOT_TRACK: "true"
 
       - name: Run clippy
         run: cargo clippy -- -D warnings

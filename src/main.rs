@@ -125,7 +125,7 @@ impl PactPlugin for SyncMessagePactPlugin {
                                     proto::ContentMismatch {
                                         expected: Some(expected_content.clone()),
                                         actual: Some(actual_content.clone()),
-                                        mismatch: format!("Content mismatch"),
+                                        mismatch: "Content mismatch".to_string(),
                                         path: String::default(),
                                         diff: String::default(),
                                     }
@@ -166,7 +166,7 @@ impl PactPlugin for SyncMessagePactPlugin {
                                 proto::ContentMismatch {
                                     expected: Some(contents.clone()),
                                     actual: None,
-                                    mismatch: format!("Expected content, but did not get any"),
+                                    mismatch: "Expected content, but did not get any".to_string(),
                                     path: String::default(),
                                     diff: String::default(),
                                 }
@@ -460,11 +460,7 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
         if let Some(body_gen) = gens.get("body") {
             if let Some(body_generators) = body_gen.as_object() {
                 for (path_key, gen_def) in body_generators {
-                    let key = if path_key.starts_with('$') {
-                        path_key[1..].trim_start_matches('.').to_string()
-                    } else {
-                        path_key.clone()
-                    };
+                    let key = path_key.strip_prefix('$').unwrap_or(path_key.as_str()).trim_start_matches('.').to_string();
 
                     if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
                         if let Some(gen_map) = gen_def.as_object() {
@@ -882,7 +878,7 @@ impl Stream for TcpIncoming {
         std::pin::Pin::new(&mut self.inner)
             .poll_accept(cx)
             .map_ok(|(stream, _)| stream)
-            .map(|v| Some(v))
+            .map(Some)
     }
 }
 

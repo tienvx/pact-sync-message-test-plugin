@@ -39,8 +39,15 @@ jobs:
       - name: Build Release
         run: cargo build --release --verbose
 
+      - name: Install Plugin
+        run: |
+          mkdir -p ~/.pact/plugins/sync-message-test-0.1.0
+          cp target/release/pact-sync-message-test-plugin ~/.pact/plugins/sync-message-test-0.1.0/
+          cp pact-plugin.json ~/.pact/plugins/sync-message-test-0.1.0/
+        shell: bash
+
       - name: Run tests
-        run: cargo test --verbose
+        run: cd examples/consumer-test && PACT_DO_NOT_TRACK=true cargo test --verbose
 
       - name: Run clippy
         run: cargo clippy -- -D warnings

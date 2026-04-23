@@ -336,30 +336,24 @@ async fn run_mock_server(
 }
 
 fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
-    let parts: Vec<&str> = path
-        .trim_start_matches('$')
-        .trim_start_matches('.')
-        .split('.')
-        .collect();
+    let mut parts = path.trim_start_matches('$').trim_start_matches('.').split('.');
+    let Some(first) = parts.next() else { return };
+
     match value {
         Value::Object(map) => {
-            if parts.len() == 1 {
-                map.insert(parts[0].to_string(), new_value.clone());
-            } else if let Some(first) = parts.first() {
-                if let Some(child) = map.get_mut(&first.to_string()) {
-                    set_json_path(child, &parts[1..].join("."), new_value);
-                }
+            if parts.next().is_none() {
+                map.insert(first.to_string(), new_value.clone());
+            } else if let Some(child) = map.get_mut(first) {
+                set_json_path(child, &parts.collect::<Vec<_>>().join("."), new_value);
             }
         }
         Value::Array(arr) => {
-            if let Some(first) = parts.first() {
-                if let Ok(idx) = first.parse::<usize>() {
-                    if idx < arr.len() {
-                        if parts.len() == 1 {
-                            arr[idx] = new_value.clone();
-                        } else {
-                            set_json_path(&mut arr[idx], &parts[1..].join("."), new_value);
-                        }
+            if let Ok(idx) = first.parse::<usize>() {
+                if idx < arr.len() {
+                    if parts.next().is_none() {
+                        arr[idx] = new_value.clone();
+                    } else {
+                        set_json_path(&mut arr[idx], &parts.collect::<Vec<_>>().join("."), new_value);
                     }
                 }
             }

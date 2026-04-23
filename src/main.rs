@@ -371,68 +371,47 @@ fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
 fn apply_generators_to_body(content: &str, generators: &Value) -> String {
     use pact_models::generators::{GenerateValue, Generator};
 
+    let body_generators = generators.get("body").and_then(|v| v.as_object());
+    let Some(body_generators) = body_generators else {
+        return content.to_string();
+    };
+
+    // Try JSON path-based generators first
     let mut parsed: Value = match serde_json::from_str(content) {
         Ok(v) => v,
         Err(_) => {
-            if let Some(gens) = generators.as_object() {
-                if let Some(body_gen) = gens.get("body") {
-                    if let Some(body_generators) = body_gen.as_object() {
-                        for (_path_key, gen_def) in body_generators {
-                            if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
-                                if let Some(gen_map) = gen_def.as_object() {
-                                    if let Some(generator) = Generator::from_map(gen_type, gen_map)
-                                    {
-                                        let (context, matcher) = generator_context();
-                                        if let Ok(result) = generator.generate_value(
-                                            &content.to_string(),
-                                            &context,
-                                            &matcher,
-                                        ) {
-                                            return result;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            return content.to_string();
+            // Non-JSON: try whole-body generator
+            return generate_first_match(content, body_generators).unwrap_or(content.to_string());
         }
     };
 
-    if let Some(gens) = generators.as_object() {
-        if let Some(body_gen) = gens.get("body") {
-            if let Some(body_generators) = body_gen.as_object() {
-                for (path_key, gen_def) in body_generators {
-                    let key = path_key
-                        .strip_prefix('$')
-                        .unwrap_or(path_key.as_str())
-                        .trim_start_matches('.')
-                        .to_string();
+    let content_str = content.to_string();
+    for (path_key, gen_def) in body_generators {
+        let gen_type = gen_def.get("type").and_then(|v| v.as_str());
+        let Some((gen_type, gen_map)) = gen_type.zip(gen_def.as_object()) else { continue };
+        let Some(generator) = Generator::from_map(gen_type, gen_map) else { continue };
 
-                    if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
-                        if let Some(gen_map) = gen_def.as_object() {
-                            if let Some(generator) = Generator::from_map(gen_type, gen_map) {
-                                let (context, matcher) = generator_context();
-                                if let Ok(result) = generator.generate_value(
-                                    &content.to_string(),
-                                    &context,
-                                    &matcher,
-                                ) {
-                                    let result_val: Value = serde_json::from_str(&result)
-                                        .unwrap_or(serde_json::Value::String(result));
-                                    set_json_path(&mut parsed, &key, &result_val);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let (context, matcher) = generator_context();
+        let Ok(result) = generator.generate_value(&content_str, &context, &matcher) else { continue };
+
+        let result_val: Value = serde_json::from_str(&result).unwrap_or(Value::String(result));
+        let key = path_key.strip_prefix('$').unwrap_or(path_key).trim_start_matches('.');
+        set_json_path(&mut parsed, key, &result_val);
     }
 
     serde_json::to_string(&parsed).unwrap_or_else(|_| content.to_string())
+}
+
+fn generate_first_match(content: &str, gens: &serde_json::Map<String, Value>) -> Option<String> {
+    use pact_models::generators::{GenerateValue, Generator};
+    let content_str = content.to_string();
+    gens.values().find_map(|gen_def| {
+        let gen_type = gen_def.get("type").and_then(|v| v.as_str())?;
+        let gen_map = gen_def.as_object()?;
+        let generator = Generator::from_map(gen_type, gen_map)?;
+        let (context, matcher) = generator_context();
+        generator.generate_value(&content_str, &context, &matcher).ok()
+    })
 }
 
 fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {

@@ -150,39 +150,23 @@ impl PactPlugin for SyncMessagePactPlugin {
             request.get_ref().content_type
         );
 
-        let contents_config = request.get_ref().contents_config.as_ref();
-
-        // Extract metadata from contentsConfig - it may be nested under "metadata" key or at the top level
-        let message_metadata = if let Some(config) = contents_config {
-            if let Some(metadata) = config.fields.get("metadata") {
-                // Metadata is nested under "metadata" key
-                metadata.kind.as_ref().and_then(|k| match k {
+        let message_metadata = request.get_ref().contents_config.as_ref().and_then(|config| {
+            config.fields.get("metadata")
+                .and_then(|m| m.kind.as_ref())
+                .and_then(|k| match k {
                     prost_types::value::Kind::StructValue(s) => Some(s.clone()),
                     _ => None,
                 })
-            } else {
-                // Metadata is the entire contentsConfig
-                Some(config.clone())
-            }
-        } else {
-            None
-        };
-
-        let interactions = vec![proto::InteractionResponse {
-            contents: None,
-            rules: hashmap! {},
-            generators: hashmap! {},
-            message_metadata,
-            plugin_configuration: None,
-            interaction_markup: String::default(),
-            interaction_markup_type: 0,
-            part_name: "request".to_string(),
-        }];
+                .or_else(|| Some(config.clone()))
+        });
 
         Ok(Response::new(proto::ConfigureInteractionResponse {
-            error: String::default(),
-            interaction: interactions,
-            plugin_configuration: None,
+            interaction: vec![proto::InteractionResponse {
+                message_metadata,
+                part_name: "request".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
         }))
     }
 

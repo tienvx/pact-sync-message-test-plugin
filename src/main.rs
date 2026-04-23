@@ -587,120 +587,77 @@ async fn handle_client(
     debug!("Received: {}", received_str);
 
     let interactions_map = interactions.lock().await;
-
     let received_bytes = received_str.trim().as_bytes().to_vec();
+    let received_trimmed = received_str.trim();
 
-    // Try exact match first
-    let matching_interaction = interactions_map
-        .values()
-        .find(|config| config.request_content == received_bytes)
-        .or_else(|| {
-            // If no exact match, try matching by structure (ignoring generator matchers)
-            let received: Value = match serde_json::from_str(received_str.trim()) {
-                Ok(v) => v,
-                Err(_) => return None,
-            };
-            interactions_map.values().find(|config| {
-                let stored: Value = match serde_json::from_slice(&config.request_content) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                body_matches_structure(&stored, &received)
-            })
-        });
-
-    // If still no match, try matching the received body content against the pact JSON
-    let matching_interaction = matching_interaction.or_else(|| {
-        let received_str_trimmed = received_str.trim();
-        if let Ok(received) = serde_json::from_str::<Value>(received_str_trimmed) {
-            interactions_map.values().find(|config| {
+    let matching_interaction = interactions_map.values().find(|config| {
+        // Exact match
+        config.request_content == received_bytes ||
+        // JSON structure match
+        serde_json::from_slice::<Value>(&config.request_content).ok()
+            .zip(serde_json::from_str::<Value>(received_trimmed).ok())
+            .map_or(false, |(stored, received)| body_matches_structure(&stored, &received)) ||
+        // Normalized JSON string match
+        serde_json::from_str::<Value>(received_trimmed).ok()
+            .and_then(|received| {
                 let stored_str = String::from_utf8_lossy(&config.request_content);
-                if let Ok(stored) = serde_json::from_str::<Value>(stored_str.as_ref()) {
-                    let received_json = serde_json::to_string(&received).unwrap_or_default();
-                    let stored_json = serde_json::to_string(&stored).unwrap_or_default();
-                    received_json == stored_json
-                } else {
-                    let stored_str = stored_str.to_string();
-                    received_str_trimmed == stored_str
-                }
+                serde_json::from_str::<Value>(stored_str.as_ref()).ok().map(|stored| {
+                    serde_json::to_string(&received).unwrap_or_default() ==
+                    serde_json::to_string(&stored).unwrap_or_default()
+                })
             })
-        } else {
-            None
-        }
+            .unwrap_or(false) ||
+        // Prefix match for incomplete JSON
+        (received_trimmed.starts_with('{') || received_trimmed.starts_with('[')) &&
+            String::from_utf8_lossy(&config.request_content).starts_with(received_trimmed)
     });
 
-    // If still no match and received body looks like incomplete JSON, try prefix match
-    let matching_interaction = matching_interaction.or_else(|| {
-        let received_trimmed = received_str.trim();
-        if received_trimmed.starts_with('{') || received_trimmed.starts_with('[') {
-            interactions_map.values().find(|config| {
-                let stored_str = String::from_utf8_lossy(&config.request_content);
-                stored_str.starts_with(received_trimmed)
-            })
-        } else {
-            None
-        }
-    });
-
-    if let Some(config) = matching_interaction {
-        info!(
-            "Found matching interaction, responses count: {}",
-            config.responses.len()
-        );
-        let mut response = Vec::new();
-
-        response
-            .extend(format!("request-content: {}\n", config.request_generated_content).as_bytes());
-        response
-            .extend(format!("request-content-type: {}\n", config.request_content_type).as_bytes());
-
-        if !config.request_metadata_with_generators.is_empty() {
-            let metadata_json = serde_json::to_string(&config.request_metadata_with_generators)
-                .unwrap_or_else(|_| "{}".to_string());
-            response.extend(format!("request-metadata: {}\n", metadata_json).as_bytes());
-        }
-
-        // Send response content if available
-        if !config.responses.is_empty() {
-            info!(
-                "Sending {} responses from pact JSON",
-                config.responses.len()
-            );
-            for (i, resp) in config.responses.iter().enumerate() {
-                response.extend(
-                    format!("response-{}-content: {}\n", i + 1, resp.generated_content).as_bytes(),
-                );
-                response.extend(
-                    format!("response-{}-content-type: {}\n", i + 1, resp.content_type).as_bytes(),
-                );
-
-                let response_metadata_str = serde_json::to_string(&resp.metadata_with_generators)
-                    .unwrap_or_else(|_| "{}".to_string());
-                response.extend(
-                    format!("response-{}-metadata: {}\n", i + 1, response_metadata_str).as_bytes(),
-                );
-            }
-        } else {
-            // If no responses from pact JSON, echo the received body
-            info!("No responses in pact JSON, echoing received body");
-            let received_str_trimmed = received_str.trim().to_string();
-
-            info!("Response content: {}", received_str_trimmed);
-            response.extend(format!("response-1-content: {}\n", received_str_trimmed).as_bytes());
-            if serde_json::from_str::<Value>(received_str.trim()).is_ok() {
-                response.extend(b"response-1-content-type: application/json\n");
-            } else {
-                response.extend(b"response-1-content-type: text/plain\n");
-            }
-        }
-
-        stream.write_all(&response).await?;
-        stream.flush().await?;
-    } else {
+    let Some(config) = matching_interaction else {
         debug!("No matching interaction found");
+        return Ok(());
+    };
+
+    info!("Found matching interaction, responses count: {}", config.responses.len());
+
+    let mut response = Vec::new();
+    push_line(&mut response, format!("request-content: {}", config.request_generated_content));
+    push_line(&mut response, format!("request-content-type: {}", config.request_content_type));
+
+    if !config.request_metadata_with_generators.is_empty() {
+        let meta = serde_json::to_string(&config.request_metadata_with_generators)
+            .unwrap_or_else(|_| "{}".to_string());
+        push_line(&mut response, format!("request-metadata: {meta}"));
     }
 
+    if !config.responses.is_empty() {
+        info!("Sending {} responses from pact JSON", config.responses.len());
+        for (i, resp) in config.responses.iter().enumerate() {
+            let idx = i + 1;
+            push_line(&mut response, format!("response-{idx}-content: {}", resp.generated_content));
+            push_line(&mut response, format!("response-{idx}-content-type: {}", resp.content_type));
+            let meta = serde_json::to_string(&resp.metadata_with_generators)
+                .unwrap_or_else(|_| "{}".to_string());
+            push_line(&mut response, format!("response-{idx}-metadata: {meta}"));
+        }
+    } else {
+        info!("No responses in pact JSON, echoing received body");
+        push_line(&mut response, format!("response-1-content: {received_trimmed}"));
+        push_line(&mut response,
+            if serde_json::from_str::<Value>(received_trimmed).is_ok() {
+                "response-1-content-type: application/json"
+            } else {
+                "response-1-content-type: text/plain"
+            }
+        );
+    }
+
+    stream.write_all(&response).await?;
+    stream.flush().await?;
     Ok(())
+}
+
+fn push_line(buf: &mut Vec<u8>, line: impl std::fmt::Display) {
+    buf.extend(format!("{line}\n").as_bytes());
 }
 
 #[tokio::main]

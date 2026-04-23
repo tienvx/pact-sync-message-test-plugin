@@ -626,7 +626,7 @@ async fn handle_client(
         // JSON structure match
         serde_json::from_slice::<Value>(&config.request_content).ok()
             .zip(serde_json::from_str::<Value>(received_trimmed).ok())
-            .map_or(false, |(stored, received)| body_matches_structure(&stored, &received)) ||
+            .is_some_and(|(stored, received)| body_matches_structure(&stored, &received)) ||
         // Normalized JSON string match
         serde_json::from_str::<Value>(received_trimmed).ok()
             .and_then(|received| {

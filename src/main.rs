@@ -687,20 +687,6 @@ async fn handle_client(
                 .unwrap_or_else(|_| "{}".to_string());
             push_line(&mut response, format!("response-{idx}-metadata: {meta}"));
         }
-    } else {
-        info!("No responses in pact JSON, echoing received body");
-        push_line(
-            &mut response,
-            format!("response-1-content: {received_trimmed}"),
-        );
-        push_line(
-            &mut response,
-            if serde_json::from_str::<Value>(received_trimmed).is_ok() {
-                "response-1-content-type: application/json"
-            } else {
-                "response-1-content-type: text/plain"
-            },
-        );
     }
 
     stream.write_all(&response).await?;

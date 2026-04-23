@@ -175,18 +175,12 @@ impl PactPlugin for SyncMessagePactPlugin {
         request: tonic::Request<proto::GenerateContentRequest>,
     ) -> Result<tonic::Response<proto::GenerateContentResponse>, tonic::Status> {
         debug!("Received generate_content request");
-        let req = request.get_ref();
-
-        let contents = req.contents.as_ref();
-        let body = contents.map(|c| proto::Body {
+        let body = request.get_ref().contents.as_ref().map(|c| proto::Body {
             content_type: c.content_type.clone(),
             content: c.content.clone(),
             content_type_hint: c.content_type_hint,
         });
-
-        Ok(Response::new(proto::GenerateContentResponse {
-            contents: body,
-        }))
+        Ok(Response::new(proto::GenerateContentResponse { contents: body }))
     }
 
     async fn start_mock_server(

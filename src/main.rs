@@ -21,10 +21,7 @@ fn generator_context() -> (
     HashMap<&'static str, Value>,
     Box<dyn pact_models::generators::VariantMatcher + Send + Sync>,
 ) {
-    (
-        HashMap::new(),
-        Box::new(NoopVariantMatcher),
-    )
+    (HashMap::new(), Box::new(NoopVariantMatcher))
 }
 
 fn value_to_hashmap(v: &Value) -> HashMap<String, Value> {
@@ -150,15 +147,21 @@ impl PactPlugin for SyncMessagePactPlugin {
             request.get_ref().content_type
         );
 
-        let message_metadata = request.get_ref().contents_config.as_ref().and_then(|config| {
-            config.fields.get("metadata")
-                .and_then(|m| m.kind.as_ref())
-                .and_then(|k| match k {
-                    prost_types::value::Kind::StructValue(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .or_else(|| Some(config.clone()))
-        });
+        let message_metadata = request
+            .get_ref()
+            .contents_config
+            .as_ref()
+            .and_then(|config| {
+                config
+                    .fields
+                    .get("metadata")
+                    .and_then(|m| m.kind.as_ref())
+                    .and_then(|k| match k {
+                        prost_types::value::Kind::StructValue(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .or_else(|| Some(config.clone()))
+            });
 
         Ok(Response::new(proto::ConfigureInteractionResponse {
             interaction: vec![proto::InteractionResponse {
@@ -180,7 +183,9 @@ impl PactPlugin for SyncMessagePactPlugin {
             content: c.content.clone(),
             content_type_hint: c.content_type_hint,
         });
-        Ok(Response::new(proto::GenerateContentResponse { contents: body }))
+        Ok(Response::new(proto::GenerateContentResponse {
+            contents: body,
+        }))
     }
 
     async fn start_mock_server(
@@ -193,32 +198,29 @@ impl PactPlugin for SyncMessagePactPlugin {
         let host = if req.host_interface.is_empty() {
             "127.0.0.1"
         } else {
-            req.host_interface.as_str()
+            &req.host_interface
         };
-        let port = req.port;
 
-        let addr: SocketAddr = format!("{}:{}", host, port).parse().map_err(|e| {
+        let addr: SocketAddr = format!("{}:{}", host, req.port).parse().map_err(|e| {
             Status::invalid_argument(format!(
                 "Invalid address: {} - host: {}, port: {}",
-                e, host, port
+                e, host, req.port
             ))
         })?;
 
         let listener = TcpListener::bind(addr)
             .await
             .map_err(|e| Status::internal(format!("Failed to bind: {}", e)))?;
-
         let address = listener
             .local_addr()
             .map_err(|e| Status::internal(format!("Failed to get local address: {}", e)))?;
 
         let server_key = Uuid::new_v4().to_string();
-        let server_key_for_spawn = server_key.clone();
         let interactions = self.interactions.clone();
         let pact_json = req.pact.clone();
-
+        let server_key_spawn = server_key.clone();
         tokio::spawn(async move {
-            run_mock_server(listener, server_key_for_spawn, interactions, pact_json).await;
+            run_mock_server(listener, server_key_spawn, interactions, pact_json).await;
         });
 
         Ok(Response::new(proto::StartMockServerResponse {
@@ -236,7 +238,10 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::ShutdownMockServerRequest>,
     ) -> Result<tonic::Response<proto::ShutdownMockServerResponse>, tonic::Status> {
-        debug!("Received shutdown_mock_server request for server: {}", request.get_ref().server_key);
+        debug!(
+            "Received shutdown_mock_server request for server: {}",
+            request.get_ref().server_key
+        );
         Ok(Response::new(proto::ShutdownMockServerResponse::default()))
     }
 
@@ -244,7 +249,10 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::MockServerRequest>,
     ) -> Result<tonic::Response<proto::MockServerResults>, tonic::Status> {
-        debug!("Received get_mock_server_results request for server: {}", request.get_ref().server_key);
+        debug!(
+            "Received get_mock_server_results request for server: {}",
+            request.get_ref().server_key
+        );
         Ok(Response::new(proto::MockServerResults::default()))
     }
 
@@ -252,7 +260,9 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         _request: tonic::Request<proto::VerificationPreparationRequest>,
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, tonic::Status> {
-        Ok(Response::new(proto::VerificationPreparationResponse::default()))
+        Ok(Response::new(
+            proto::VerificationPreparationResponse::default(),
+        ))
     }
 
     async fn verify_interaction(
@@ -296,7 +306,10 @@ async fn run_mock_server(
 }
 
 fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
-    let mut parts = path.trim_start_matches('$').trim_start_matches('.').split('.');
+    let mut parts = path
+        .trim_start_matches('$')
+        .trim_start_matches('.')
+        .split('.');
     let Some(first) = parts.next() else { return };
 
     match value {
@@ -313,7 +326,11 @@ fn set_json_path(value: &mut Value, path: &str, new_value: &Value) {
                     if parts.next().is_none() {
                         arr[idx] = new_value.clone();
                     } else {
-                        set_json_path(&mut arr[idx], &parts.collect::<Vec<_>>().join("."), new_value);
+                        set_json_path(
+                            &mut arr[idx],
+                            &parts.collect::<Vec<_>>().join("."),
+                            new_value,
+                        );
                     }
                 }
             }
@@ -342,14 +359,23 @@ fn apply_generators_to_body(content: &str, generators: &Value) -> String {
     let content_str = content.to_string();
     for (path_key, gen_def) in body_generators {
         let gen_type = gen_def.get("type").and_then(|v| v.as_str());
-        let Some((gen_type, gen_map)) = gen_type.zip(gen_def.as_object()) else { continue };
-        let Some(generator) = Generator::from_map(gen_type, gen_map) else { continue };
+        let Some((gen_type, gen_map)) = gen_type.zip(gen_def.as_object()) else {
+            continue;
+        };
+        let Some(generator) = Generator::from_map(gen_type, gen_map) else {
+            continue;
+        };
 
         let (context, matcher) = generator_context();
-        let Ok(result) = generator.generate_value(&content_str, &context, &matcher) else { continue };
+        let Ok(result) = generator.generate_value(&content_str, &context, &matcher) else {
+            continue;
+        };
 
         let result_val: Value = serde_json::from_str(&result).unwrap_or(Value::String(result));
-        let key = path_key.strip_prefix('$').unwrap_or(path_key).trim_start_matches('.');
+        let key = path_key
+            .strip_prefix('$')
+            .unwrap_or(path_key)
+            .trim_start_matches('.');
         set_json_path(&mut parsed, key, &result_val);
     }
 
@@ -364,7 +390,9 @@ fn generate_first_match(content: &str, gens: &serde_json::Map<String, Value>) ->
         let gen_map = gen_def.as_object()?;
         let generator = Generator::from_map(gen_type, gen_map)?;
         let (context, matcher) = generator_context();
-        generator.generate_value(&content_str, &context, &matcher).ok()
+        generator
+            .generate_value(&content_str, &context, &matcher)
+            .ok()
     })
 }
 
@@ -372,8 +400,12 @@ fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
     use pact_models::generators::GenerateValue;
 
     let metadata_generators = generators.get("metadata").and_then(|v| v.as_object());
-    let Some(metadata_generators) = metadata_generators else { return metadata.clone() };
-    let Some(metadata_obj) = metadata.as_object() else { return metadata.clone() };
+    let Some(metadata_generators) = metadata_generators else {
+        return metadata.clone();
+    };
+    let Some(metadata_obj) = metadata.as_object() else {
+        return metadata.clone();
+    };
 
     let mut result = serde_json::Map::new();
     for (key, value) in metadata_obj {
@@ -382,21 +414,31 @@ fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
             let gen_map = gen_def.as_object()?;
             let generator = pact_models::generators::Generator::from_map(gen_type, gen_map)?;
             let (context, matcher) = generator_context();
-            generator.generate_value(&value.to_string(), &context, &matcher).ok()
+            generator
+                .generate_value(&value.to_string(), &context, &matcher)
+                .ok()
         });
 
-        result.insert(key.clone(), match generated {
-            Some(s) => parse_generated_value(&s),
-            None => value.clone(),
-        });
+        result.insert(
+            key.clone(),
+            match generated {
+                Some(s) => parse_generated_value(&s),
+                None => value.clone(),
+            },
+        );
     }
     Value::Object(result)
 }
 
 fn parse_generated_value(s: &str) -> Value {
-    serde_json::from_str(s).ok()
+    serde_json::from_str(s)
+        .ok()
         .or_else(|| s.parse::<i64>().ok().map(|n| Value::Number(n.into())))
-        .or_else(|| s.parse::<f64>().ok().and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)))
+        .or_else(|| {
+            s.parse::<f64>()
+                .ok()
+                .and_then(|n| serde_json::Number::from_f64(n).map(Value::Number))
+        })
         .unwrap_or(Value::String(s.to_string()))
 }
 
@@ -447,7 +489,8 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
             continue;
         }
 
-        let key = interaction.get("description")
+        let key = interaction
+            .get("description")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
@@ -455,8 +498,14 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
 
         let request = interaction.get("request");
         let (request_content, request_content_type) = extract_content_and_type(request);
-        let request_metadata = request.and_then(|r| r.get("metadata")).cloned().unwrap_or(Value::Null);
-        let request_generators = request.and_then(|r| r.get("generators")).cloned().unwrap_or(Value::Null);
+        let request_metadata = request
+            .and_then(|r| r.get("metadata"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let request_generators = request
+            .and_then(|r| r.get("generators"))
+            .cloned()
+            .unwrap_or(Value::Null);
         info!("Request generators: {:?}", request_generators);
 
         let request_generated_content = apply_generators_to_body(
@@ -467,35 +516,51 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
 
         let request_metadata_with_generators =
             apply_generators_to_metadata(&request_metadata, &request_generators);
-        info!("Request metadata with generators: {:?}", request_metadata_with_generators);
+        info!(
+            "Request metadata with generators: {:?}",
+            request_metadata_with_generators
+        );
 
-        let responses = interaction.get("response").and_then(|v| v.as_array())
-            .map(|response_arr| response_arr.iter().map(|resp| {
-                let (content, content_type) = extract_content_and_type(Some(resp));
-                let generators = resp.get("generators").cloned().unwrap_or(Value::Null);
-                let response_metadata = resp.get("metadata").cloned().unwrap_or(Value::Null);
+        let responses = interaction
+            .get("response")
+            .and_then(|v| v.as_array())
+            .map(|response_arr| {
+                response_arr
+                    .iter()
+                    .map(|resp| {
+                        let (content, content_type) = extract_content_and_type(Some(resp));
+                        let generators = resp.get("generators").cloned().unwrap_or(Value::Null);
+                        let response_metadata =
+                            resp.get("metadata").cloned().unwrap_or(Value::Null);
 
-                SyncMessageResponse {
-                    metadata_with_generators: value_to_hashmap(
-                        &apply_generators_to_metadata(&response_metadata, &generators),
-                    ),
-                    generated_content: apply_generators_to_body(
-                        &String::from_utf8_lossy(&content),
-                        &generators,
-                    ),
-                    content,
-                    content_type,
-                }
-            }).collect())
+                        SyncMessageResponse {
+                            metadata_with_generators: value_to_hashmap(
+                                &apply_generators_to_metadata(&response_metadata, &generators),
+                            ),
+                            generated_content: apply_generators_to_body(
+                                &String::from_utf8_lossy(&content),
+                                &generators,
+                            ),
+                            content,
+                            content_type,
+                        }
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
-        interactions.insert(key, SyncMessageConfig {
-            request_metadata_with_generators: value_to_hashmap(&request_metadata_with_generators),
-            request_generated_content,
-            responses,
-            request_content,
-            request_content_type,
-        });
+        interactions.insert(
+            key,
+            SyncMessageConfig {
+                request_metadata_with_generators: value_to_hashmap(
+                    &request_metadata_with_generators,
+                ),
+                request_generated_content,
+                responses,
+                request_content,
+                request_content_type,
+            },
+        );
     }
 
     interactions
@@ -503,14 +568,25 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
 
 fn extract_content_and_type(part: Option<&Value>) -> (Vec<u8>, String) {
     let contents = part.and_then(|p| p.get("contents"));
-    let content = contents.and_then(|c| c.get("content")).map(|v| {
-        v.as_str().map(|s| s.as_bytes().to_vec())
-            .or_else(|| v.as_object().map(|o| serde_json::to_string(o).unwrap_or_default().into_bytes()))
-            .or_else(|| v.as_array().map(|a| serde_json::to_string(a).unwrap_or_default().into_bytes()))
-            .unwrap_or_default()
-    }).unwrap_or_default();
+    let content = contents
+        .and_then(|c| c.get("content"))
+        .map(|v| {
+            v.as_str()
+                .map(|s| s.as_bytes().to_vec())
+                .or_else(|| {
+                    v.as_object()
+                        .map(|o| serde_json::to_string(o).unwrap_or_default().into_bytes())
+                })
+                .or_else(|| {
+                    v.as_array()
+                        .map(|a| serde_json::to_string(a).unwrap_or_default().into_bytes())
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
 
-    let content_type = contents.and_then(|c| c.get("contentType"))
+    let content_type = contents
+        .and_then(|c| c.get("contentType"))
         .and_then(|v| v.as_str())
         .unwrap_or("application/test")
         .to_string();
@@ -571,11 +647,20 @@ async fn handle_client(
         return Ok(());
     };
 
-    info!("Found matching interaction, responses count: {}", config.responses.len());
+    info!(
+        "Found matching interaction, responses count: {}",
+        config.responses.len()
+    );
 
     let mut response = Vec::new();
-    push_line(&mut response, format!("request-content: {}", config.request_generated_content));
-    push_line(&mut response, format!("request-content-type: {}", config.request_content_type));
+    push_line(
+        &mut response,
+        format!("request-content: {}", config.request_generated_content),
+    );
+    push_line(
+        &mut response,
+        format!("request-content-type: {}", config.request_content_type),
+    );
 
     if !config.request_metadata_with_generators.is_empty() {
         let meta = serde_json::to_string(&config.request_metadata_with_generators)
@@ -584,24 +669,37 @@ async fn handle_client(
     }
 
     if !config.responses.is_empty() {
-        info!("Sending {} responses from pact JSON", config.responses.len());
+        info!(
+            "Sending {} responses from pact JSON",
+            config.responses.len()
+        );
         for (i, resp) in config.responses.iter().enumerate() {
             let idx = i + 1;
-            push_line(&mut response, format!("response-{idx}-content: {}", resp.generated_content));
-            push_line(&mut response, format!("response-{idx}-content-type: {}", resp.content_type));
+            push_line(
+                &mut response,
+                format!("response-{idx}-content: {}", resp.generated_content),
+            );
+            push_line(
+                &mut response,
+                format!("response-{idx}-content-type: {}", resp.content_type),
+            );
             let meta = serde_json::to_string(&resp.metadata_with_generators)
                 .unwrap_or_else(|_| "{}".to_string());
             push_line(&mut response, format!("response-{idx}-metadata: {meta}"));
         }
     } else {
         info!("No responses in pact JSON, echoing received body");
-        push_line(&mut response, format!("response-1-content: {received_trimmed}"));
-        push_line(&mut response,
+        push_line(
+            &mut response,
+            format!("response-1-content: {received_trimmed}"),
+        );
+        push_line(
+            &mut response,
             if serde_json::from_str::<Value>(received_trimmed).is_ok() {
                 "response-1-content-type: application/json"
             } else {
                 "response-1-content-type: text/plain"
-            }
+            },
         );
     }
 

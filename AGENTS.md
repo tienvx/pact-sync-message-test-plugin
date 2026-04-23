@@ -7,9 +7,9 @@ cargo build --release
 
 ## Install the plugin
 ```bash
-mkdir -p ~/.pact/plugins/sync-message-test-0.1.0
-cp target/release/pact-sync-message-test-plugin ~/.pact/plugins/sync-message-test-0.1.0/
-cp pact-plugin.json ~/.pact/plugins/sync-message-test-0.1.0/
+mkdir -p ~/.pact/plugins/sync-message-test-0.2.0
+cp target/release/pact-sync-message-test-plugin ~/.pact/plugins/sync-message-test-0.2.0/
+cp pact-plugin.json ~/.pact/plugins/sync-message-test-0.2.0/
 ```
 
 ## Run the plugin

@@ -484,135 +484,84 @@ fn body_matches_structure(stored: &Value, received: &Value) -> bool {
 fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
     let mut interactions = HashMap::new();
 
-    if let Some(interactions_arr) = pact.get("interactions").and_then(|v| v.as_array()) {
-        for interaction in interactions_arr {
-            if interaction.get("type").and_then(|v| v.as_str()) == Some("Synchronous/Messages") {
-                let key = interaction
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                info!("Processing interaction: {}", key);
-                info!(
-                    "Full interaction JSON: {}",
-                    serde_json::to_string_pretty(interaction).unwrap_or_default()
-                );
+    let Some(interactions_arr) = pact.get("interactions").and_then(|v| v.as_array()) else {
+        return interactions;
+    };
 
-                let request_content = interaction
-                    .get("request")
-                    .and_then(|r| r.get("contents"))
-                    .and_then(|c| c.get("content"))
-                    .map(|v| {
-                        if let Some(s) = v.as_str() {
-                            s.as_bytes().to_vec()
-                        } else if let Some(obj) = v.as_object() {
-                            serde_json::to_string(obj).unwrap_or_default().into_bytes()
-                        } else {
-                            vec![]
-                        }
-                    })
-                    .unwrap_or_default();
-
-                let request_content_type = interaction
-                    .get("request")
-                    .and_then(|r| r.get("contents"))
-                    .and_then(|c| c.get("contentType"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("application/test")
-                    .to_string();
-
-                let request_metadata = interaction
-                    .get("request")
-                    .and_then(|r| r.get("metadata"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-
-                let request_generators = interaction
-                    .get("request")
-                    .and_then(|r| r.get("generators"))
-                    .cloned()
-                    .unwrap_or(Value::Null);
-                info!("Request generators: {:?}", request_generators);
-
-                let request_generated_content = apply_generators_to_body(
-                    &String::from_utf8_lossy(&request_content),
-                    &request_generators,
-                );
-                info!("Request generated content: {}", request_generated_content);
-
-                let request_metadata_with_generators =
-                    apply_generators_to_metadata(&request_metadata, &request_generators);
-                info!(
-                    "Request metadata with generators: {:?}",
-                    request_metadata_with_generators
-                );
-
-                let mut responses = vec![];
-                if let Some(response_arr) = interaction.get("response").and_then(|v| v.as_array()) {
-                    for resp in response_arr {
-                        let content = resp
-                            .get("contents")
-                            .and_then(|c| c.get("content"))
-                            .map(|v| {
-                                if let Some(s) = v.as_str() {
-                                    s.as_bytes().to_vec()
-                                } else if let Some(obj) = v.as_object() {
-                                    serde_json::to_string(obj).unwrap_or_default().into_bytes()
-                                } else if let Some(arr) = v.as_array() {
-                                    serde_json::to_string(arr).unwrap_or_default().into_bytes()
-                                } else {
-                                    vec![]
-                                }
-                            })
-                            .unwrap_or_default();
-
-                        let content_type = resp
-                            .get("contents")
-                            .and_then(|c| c.get("contentType"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("application/test")
-                            .to_string();
-
-                        let generators = resp.get("generators").cloned().unwrap_or(Value::Null);
-
-                        let generated_content = apply_generators_to_body(
-                            &String::from_utf8_lossy(&content),
-                            &generators,
-                        );
-
-                        let response_metadata =
-                            resp.get("metadata").cloned().unwrap_or(Value::Null);
-
-                        let response_metadata_with_generators = value_to_hashmap(
-                            &apply_generators_to_metadata(&response_metadata, &generators),
-                        );
-
-                        responses.push(SyncMessageResponse {
-                            content,
-                            content_type,
-                            metadata_with_generators: response_metadata_with_generators,
-                            generated_content,
-                        });
-                    }
-                }
-
-                interactions.insert(
-                    key,
-                    SyncMessageConfig {
-                        request_content,
-                        request_content_type,
-                        request_metadata_with_generators: value_to_hashmap(
-                            &request_metadata_with_generators,
-                        ),
-                        request_generated_content,
-                        responses,
-                    },
-                );
-            }
+    for interaction in interactions_arr {
+        if interaction.get("type").and_then(|v| v.as_str()) != Some("Synchronous/Messages") {
+            continue;
         }
+
+        let key = interaction.get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        info!("Processing interaction: {}", key);
+
+        let request = interaction.get("request");
+        let (request_content, request_content_type) = extract_content_and_type(request);
+        let request_metadata = request.and_then(|r| r.get("metadata")).cloned().unwrap_or(Value::Null);
+        let request_generators = request.and_then(|r| r.get("generators")).cloned().unwrap_or(Value::Null);
+        info!("Request generators: {:?}", request_generators);
+
+        let request_generated_content = apply_generators_to_body(
+            &String::from_utf8_lossy(&request_content),
+            &request_generators,
+        );
+        info!("Request generated content: {}", request_generated_content);
+
+        let request_metadata_with_generators =
+            apply_generators_to_metadata(&request_metadata, &request_generators);
+        info!("Request metadata with generators: {:?}", request_metadata_with_generators);
+
+        let responses = interaction.get("response").and_then(|v| v.as_array())
+            .map(|response_arr| response_arr.iter().map(|resp| {
+                let (content, content_type) = extract_content_and_type(Some(resp));
+                let generators = resp.get("generators").cloned().unwrap_or(Value::Null);
+                let response_metadata = resp.get("metadata").cloned().unwrap_or(Value::Null);
+
+                SyncMessageResponse {
+                    metadata_with_generators: value_to_hashmap(
+                        &apply_generators_to_metadata(&response_metadata, &generators),
+                    ),
+                    generated_content: apply_generators_to_body(
+                        &String::from_utf8_lossy(&content),
+                        &generators,
+                    ),
+                    content,
+                    content_type,
+                }
+            }).collect())
+            .unwrap_or_default();
+
+        interactions.insert(key, SyncMessageConfig {
+            request_metadata_with_generators: value_to_hashmap(&request_metadata_with_generators),
+            request_generated_content,
+            responses,
+            request_content,
+            request_content_type,
+        });
     }
 
     interactions
+}
+
+fn extract_content_and_type(part: Option<&Value>) -> (Vec<u8>, String) {
+    let contents = part.and_then(|p| p.get("contents"));
+    let content = contents.and_then(|c| c.get("content")).map(|v| {
+        v.as_str().map(|s| s.as_bytes().to_vec())
+            .or_else(|| v.as_object().map(|o| serde_json::to_string(o).unwrap_or_default().into_bytes()))
+            .or_else(|| v.as_array().map(|a| serde_json::to_string(a).unwrap_or_default().into_bytes()))
+            .unwrap_or_default()
+    }).unwrap_or_default();
+
+    let content_type = contents.and_then(|c| c.get("contentType"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("application/test")
+        .to_string();
+
+    (content, content_type)
 }
 
 async fn handle_client(

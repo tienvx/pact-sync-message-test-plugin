@@ -236,48 +236,30 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::ShutdownMockServerRequest>,
     ) -> Result<tonic::Response<proto::ShutdownMockServerResponse>, tonic::Status> {
-        debug!(
-            "Received shutdown_mock_server request for server: {}",
-            request.get_ref().server_key
-        );
-
-        Ok(Response::new(proto::ShutdownMockServerResponse {
-            ok: true,
-            results: vec![],
-        }))
+        debug!("Received shutdown_mock_server request for server: {}", request.get_ref().server_key);
+        Ok(Response::new(proto::ShutdownMockServerResponse::default()))
     }
 
     async fn get_mock_server_results(
         &self,
         request: tonic::Request<proto::MockServerRequest>,
     ) -> Result<tonic::Response<proto::MockServerResults>, tonic::Status> {
-        debug!(
-            "Received get_mock_server_results request for server: {}",
-            request.get_ref().server_key
-        );
-
-        Ok(Response::new(proto::MockServerResults {
-            ok: true,
-            results: vec![],
-        }))
+        debug!("Received get_mock_server_results request for server: {}", request.get_ref().server_key);
+        Ok(Response::new(proto::MockServerResults::default()))
     }
 
     async fn prepare_interaction_for_verification(
         &self,
         _request: tonic::Request<proto::VerificationPreparationRequest>,
     ) -> Result<tonic::Response<proto::VerificationPreparationResponse>, tonic::Status> {
-        Ok(Response::new(proto::VerificationPreparationResponse {
-            response: None,
-        }))
+        Ok(Response::new(proto::VerificationPreparationResponse::default()))
     }
 
     async fn verify_interaction(
         &self,
         _request: tonic::Request<proto::VerifyInteractionRequest>,
     ) -> Result<tonic::Response<proto::VerifyInteractionResponse>, tonic::Status> {
-        Ok(Response::new(proto::VerifyInteractionResponse {
-            response: None,
-        }))
+        Ok(Response::new(proto::VerifyInteractionResponse::default()))
     }
 }
 

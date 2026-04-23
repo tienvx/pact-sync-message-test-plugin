@@ -417,57 +417,33 @@ fn generate_first_match(content: &str, gens: &serde_json::Map<String, Value>) ->
 fn apply_generators_to_metadata(metadata: &Value, generators: &Value) -> Value {
     use pact_models::generators::GenerateValue;
 
-    if let Some(gen_obj) = generators.get("metadata") {
-        if let Some(metadata_generators) = gen_obj.as_object() {
-            if let Some(metadata_obj) = metadata.as_object() {
-                let mut result = serde_json::Map::new();
-                for (key, value) in metadata_obj {
-                    if let Some(gen_def) = metadata_generators.get(key) {
-                        if let Some(gen_map) = gen_def.as_object() {
-                            if let Some(gen_type) = gen_def.get("type").and_then(|v| v.as_str()) {
-                                if let Some(generator) =
-                                    pact_models::generators::Generator::from_map(gen_type, gen_map)
-                                {
-                                    let (context, matcher) = generator_context();
-                                    if let Ok(result_str) = generator.generate_value(
-                                        &value.to_string(),
-                                        &context,
-                                        &matcher,
-                                    ) {
-                                        if let Ok(num) = result_str.parse::<i64>() {
-                                            result.insert(
-                                                key.clone(),
-                                                serde_json::Value::Number(
-                                                    serde_json::Number::from(num),
-                                                ),
-                                            );
-                                        } else if let Ok(num) = result_str.parse::<f64>() {
-                                            result.insert(
-                                                key.clone(),
-                                                serde_json::Value::Number(
-                                                    serde_json::Number::from_f64(num)
-                                                        .unwrap_or(serde_json::Number::from(0)),
-                                                ),
-                                            );
-                                        } else {
-                                            result.insert(
-                                                key.clone(),
-                                                serde_json::Value::String(result_str),
-                                            );
-                                        }
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    result.insert(key.clone(), value.clone());
-                }
-                return Value::Object(result);
-            }
-        }
+    let metadata_generators = generators.get("metadata").and_then(|v| v.as_object());
+    let Some(metadata_generators) = metadata_generators else { return metadata.clone() };
+    let Some(metadata_obj) = metadata.as_object() else { return metadata.clone() };
+
+    let mut result = serde_json::Map::new();
+    for (key, value) in metadata_obj {
+        let generated = metadata_generators.get(key).and_then(|gen_def| {
+            let gen_type = gen_def.get("type").and_then(|v| v.as_str())?;
+            let gen_map = gen_def.as_object()?;
+            let generator = pact_models::generators::Generator::from_map(gen_type, gen_map)?;
+            let (context, matcher) = generator_context();
+            generator.generate_value(&value.to_string(), &context, &matcher).ok()
+        });
+
+        result.insert(key.clone(), match generated {
+            Some(s) => parse_generated_value(&s),
+            None => value.clone(),
+        });
     }
-    metadata.clone()
+    Value::Object(result)
+}
+
+fn parse_generated_value(s: &str) -> Value {
+    serde_json::from_str(s).ok()
+        .or_else(|| s.parse::<i64>().ok().map(|n| Value::Number(n.into())))
+        .or_else(|| s.parse::<f64>().ok().and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)))
+        .unwrap_or(Value::String(s.to_string()))
 }
 
 fn body_matches_structure(stored: &Value, received: &Value) -> bool {

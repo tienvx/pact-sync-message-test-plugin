@@ -44,7 +44,6 @@ pub struct SyncMessageConfig {
     pub request_content: Vec<u8>,
     pub request_content_type: String,
     pub request_metadata_with_generators: HashMap<String, Value>,
-    pub request_generators: Value,
     pub request_generated_content: String,
     pub responses: Vec<SyncMessageResponse>,
 }
@@ -694,7 +693,6 @@ fn extract_interactions(pact: &Value) -> HashMap<String, SyncMessageConfig> {
                         request_metadata_with_generators: value_to_hashmap(
                             &request_metadata_with_generators,
                         ),
-                        request_generators,
                         request_generated_content,
                         responses,
                     },

@@ -103,86 +103,42 @@ impl PactPlugin for SyncMessagePactPlugin {
         &self,
         request: tonic::Request<proto::CompareContentsRequest>,
     ) -> Result<tonic::Response<proto::CompareContentsResponse>, tonic::Status> {
-        let request = request.get_ref();
-        debug!("compare_contents request - {:?}", request);
+        let req = request.get_ref();
+        debug!("compare_contents request - {:?}", req);
 
-        match (request.expected.as_ref(), request.actual.as_ref()) {
-            (Some(expected), Some(actual)) => {
-                let expected_content = expected.content.as_ref().unwrap();
-                let actual_content = actual.content.as_ref().unwrap();
+        let exp = req.expected.as_ref().and_then(|e| e.content.as_ref());
+        let act = req.actual.as_ref().and_then(|a| a.content.as_ref());
 
-                if expected_content == actual_content {
-                    Ok(Response::new(proto::CompareContentsResponse {
-                        error: String::default(),
-                        type_mismatch: None,
-                        results: hashmap! {},
-                    }))
-                } else {
-                    Ok(Response::new(proto::CompareContentsResponse {
-                        error: String::default(),
-                        type_mismatch: None,
-                        results: hashmap! {
-                            String::default() => proto::ContentMismatches {
-                                mismatches: vec![
-                                    proto::ContentMismatch {
-                                        expected: Some(expected_content.clone()),
-                                        actual: Some(actual_content.clone()),
-                                        mismatch: "Content mismatch".to_string(),
-                                        path: String::default(),
-                                        diff: String::default(),
-                                    }
-                                ]
-                            }
-                        },
-                    }))
+        let mismatch = match (exp, act) {
+            (Some(e), Some(a)) if e != a => proto::ContentMismatch {
+                expected: Some(e.clone()),
+                actual: Some(a.clone()),
+                mismatch: "Content mismatch".into(),
+                ..Default::default()
+            },
+            (None, Some(a)) => proto::ContentMismatch {
+                expected: None,
+                actual: Some(a.clone()),
+                mismatch: format!("Expected no content, but got {} bytes", a.len()),
+                ..Default::default()
+            },
+            (Some(e), None) => proto::ContentMismatch {
+                expected: Some(e.clone()),
+                actual: None,
+                mismatch: "Expected content, but did not get any".into(),
+                ..Default::default()
+            },
+            _ => return Ok(Response::new(proto::CompareContentsResponse::default())),
+        };
+
+        Ok(Response::new(proto::CompareContentsResponse {
+            results: hashmap! {
+                String::new() => proto::ContentMismatches {
+                    mismatches: vec![mismatch],
                 }
-            }
-            (None, Some(actual)) => {
-                let contents = actual.content.as_ref().unwrap();
-                Ok(Response::new(proto::CompareContentsResponse {
-                    error: String::default(),
-                    type_mismatch: None,
-                    results: hashmap! {
-                        String::default() => proto::ContentMismatches {
-                            mismatches: vec![
-                                proto::ContentMismatch {
-                                    expected: None,
-                                    actual: Some(contents.clone()),
-                                    mismatch: format!("Expected no content, but got {} bytes", contents.len()),
-                                    path: String::default(),
-                                    diff: String::default(),
-                                }
-                            ]
-                        }
-                    },
-                }))
-            }
-            (Some(expected), None) => {
-                let contents = expected.content.as_ref().unwrap();
-                Ok(Response::new(proto::CompareContentsResponse {
-                    error: String::default(),
-                    type_mismatch: None,
-                    results: hashmap! {
-                        String::default() => proto::ContentMismatches {
-                            mismatches: vec![
-                                proto::ContentMismatch {
-                                    expected: Some(contents.clone()),
-                                    actual: None,
-                                    mismatch: "Expected content, but did not get any".to_string(),
-                                    path: String::default(),
-                                    diff: String::default(),
-                                }
-                            ]
-                        }
-                    },
-                }))
-            }
-            (None, None) => Ok(Response::new(proto::CompareContentsResponse {
-                error: String::default(),
-                type_mismatch: None,
-                results: hashmap! {},
-            })),
-        }
+            },
+            ..Default::default()
+        }))
     }
 
     async fn configure_interaction(

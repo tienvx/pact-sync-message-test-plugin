@@ -18,11 +18,11 @@ use uuid::Uuid;
 use pact_models::generators::NoopVariantMatcher;
 
 fn generator_context() -> (
-    std::collections::HashMap<&'static str, Value>,
+    HashMap<&'static str, Value>,
     Box<dyn pact_models::generators::VariantMatcher + Send + Sync>,
 ) {
     (
-        std::collections::HashMap::new(),
+        HashMap::new(),
         Box::new(NoopVariantMatcher),
     )
 }
